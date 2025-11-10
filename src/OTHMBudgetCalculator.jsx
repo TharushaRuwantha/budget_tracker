@@ -1,11 +1,19 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
-import { Plus, Trash2, Edit2, Save, X, DollarSign, TrendingUp, Users, Calculator } from 'lucide-react';
+import { Plus, Trash2, Edit2, Save, X, DollarSign, TrendingUp, Users, Calculator, Download } from 'lucide-react';
+import jsPDF from 'jspdf';
+import html2canvas from 'html2canvas';
 
 const OTHMBudgetCalculator = () => {
   // Student count and tuition fee
   const [studentCount, setStudentCount] = useState(30);
   const [tuitionFeePerStudent, setTuitionFeePerStudent] = useState(450000); // LKR for 2-year program (as per proposal)
+
+  // Refs for chart elements to capture in PDF
+  const lineChartRef = useRef(null);
+  const pieChartRef = useRef(null);
+  const barChartRef = useRef(null);
+  const breakEvenRef = useRef(null);
 
   // Budget items from the proposal document - ALL EDITABLE AND DELETABLE
   const [budgetItems, setBudgetItems] = useState([
@@ -147,6 +155,235 @@ const OTHMBudgetCalculator = () => {
     }).format(amount);
   };
 
+  // PDF Generation Function
+  const generatePDF = async () => {
+    const pdf = new jsPDF('p', 'mm', 'a4');
+    const pageWidth = pdf.internal.pageSize.getWidth();
+    const pageHeight = pdf.internal.pageSize.getHeight();
+    let yPosition = 20;
+
+    // Helper function to add new page if needed
+    const checkPageBreak = (requiredSpace) => {
+      if (yPosition + requiredSpace > pageHeight - 20) {
+        pdf.addPage();
+        yPosition = 20;
+        return true;
+      }
+      return false;
+    };
+
+    // Header
+    pdf.setFontSize(20);
+    pdf.setFont('helvetica', 'bold');
+    pdf.text('OTHM IT Degree Programme', pageWidth / 2, yPosition, { align: 'center' });
+    yPosition += 8;
+    pdf.setFontSize(14);
+    pdf.setFont('helvetica', 'normal');
+    pdf.text('Budget Calculator - Fast-Track Pathway (Level 4 + 5)', pageWidth / 2, yPosition, { align: 'center' });
+    yPosition += 6;
+    pdf.setFontSize(10);
+    pdf.text('Duration: 24 months | Region 3 Pricing (Sri Lanka)', pageWidth / 2, yPosition, { align: 'center' });
+    yPosition += 12;
+
+    // Key Metrics
+    pdf.setFontSize(14);
+    pdf.setFont('helvetica', 'bold');
+    pdf.text('Key Metrics', 15, yPosition);
+    yPosition += 8;
+
+    pdf.setFontSize(10);
+    pdf.setFont('helvetica', 'normal');
+    const metrics = [
+      ['Total Students:', studentCount.toString()],
+      ['Total Revenue:', formatCurrency(calculations.totalRevenue)],
+      ['Total Expenses:', formatCurrency(calculations.totalExpenses)],
+      ['Net Profit (After Tax):', formatCurrency(calculations.netProfitAfterTax)],
+      ['Profit Margin:', `${calculations.profitMargin.toFixed(2)}%`],
+    ];
+
+    metrics.forEach(([label, value]) => {
+      pdf.text(label, 15, yPosition);
+      pdf.text(value, pageWidth - 15, yPosition, { align: 'right' });
+      yPosition += 6;
+    });
+    yPosition += 6;
+
+    // Budget Items Table
+    checkPageBreak(50);
+    pdf.setFontSize(14);
+    pdf.setFont('helvetica', 'bold');
+    pdf.text('Budget Items by Category', 15, yPosition);
+    yPosition += 8;
+
+    pdf.setFontSize(9);
+    Object.entries(groupedItems).forEach(([category, items]) => {
+      checkPageBreak(20 + items.length * 6);
+
+      pdf.setFont('helvetica', 'bold');
+      pdf.text(category, 15, yPosition);
+      yPosition += 6;
+
+      pdf.setFont('helvetica', 'normal');
+      items.forEach(item => {
+        const itemText = `${item.name} (${item.type})`;
+        pdf.text(itemText, 20, yPosition, { maxWidth: pageWidth - 75 });
+        pdf.text(formatCurrency(item.amount), pageWidth - 15, yPosition, { align: 'right' });
+        yPosition += 5;
+      });
+
+      pdf.setFont('helvetica', 'bold');
+      pdf.text('Subtotal:', pageWidth - 70, yPosition);
+      pdf.text(formatCurrency(calculations.categoryTotals[category] || 0), pageWidth - 15, yPosition, { align: 'right' });
+      yPosition += 8;
+    });
+
+    pdf.setFontSize(11);
+    pdf.text('TOTAL EXPENSES:', pageWidth - 80, yPosition);
+    pdf.text(formatCurrency(calculations.totalExpenses), pageWidth - 15, yPosition, { align: 'right' });
+    yPosition += 12;
+
+    // Financial Summary
+    checkPageBreak(60);
+    pdf.setFontSize(14);
+    pdf.setFont('helvetica', 'bold');
+    pdf.text('Financial Summary', 15, yPosition);
+    yPosition += 8;
+
+    pdf.setFontSize(10);
+    pdf.setFont('helvetica', 'normal');
+    const financialData = [
+      ['Total Revenue:', formatCurrency(calculations.totalRevenue)],
+      ['Total Expenses:', formatCurrency(calculations.totalExpenses)],
+      ['Net Profit (Before Tax):', formatCurrency(calculations.netProfitBeforeTax)],
+      [`Tax (${taxRate}%):`, formatCurrency(calculations.tax)],
+      ['Net Profit (After Tax):', formatCurrency(calculations.netProfitAfterTax)],
+    ];
+
+    financialData.forEach(([label, value]) => {
+      pdf.text(label, 15, yPosition);
+      pdf.text(value, pageWidth - 15, yPosition, { align: 'right' });
+      yPosition += 6;
+    });
+    yPosition += 8;
+
+    // Profit Distribution
+    pdf.setFontSize(12);
+    pdf.setFont('helvetica', 'bold');
+    pdf.text('Profit Distribution', 15, yPosition);
+    yPosition += 6;
+
+    pdf.setFontSize(10);
+    pdf.setFont('helvetica', 'normal');
+    const profitDist = [
+      ['Achievers Institute (70%):', formatCurrency(calculations.achieversShare)],
+      ['Consulting Team Total (30%):', formatCurrency(calculations.consultingShare)],
+      ['  → Partner 1 (15%):', formatCurrency(calculations.partner1Share)],
+      ['  → Partner 2 (15%):', formatCurrency(calculations.partner2Share)],
+    ];
+
+    profitDist.forEach(([label, value]) => {
+      pdf.text(label, 20, yPosition);
+      pdf.text(value, pageWidth - 15, yPosition, { align: 'right' });
+      yPosition += 6;
+    });
+    yPosition += 10;
+
+    // Capture and add charts
+    pdf.addPage();
+    yPosition = 20;
+    pdf.setFontSize(14);
+    pdf.setFont('helvetica', 'bold');
+    pdf.text('Visual Analysis', pageWidth / 2, yPosition, { align: 'center' });
+    yPosition += 10;
+
+    // Capture Line Chart
+    if (lineChartRef.current) {
+      try {
+        const canvas = await html2canvas(lineChartRef.current, { scale: 2, backgroundColor: '#ffffff' });
+        const imgData = canvas.toDataURL('image/png');
+        const imgWidth = pageWidth - 30;
+        const imgHeight = (canvas.height * imgWidth) / canvas.width;
+
+        checkPageBreak(imgHeight + 15);
+        pdf.setFontSize(11);
+        pdf.setFont('helvetica', 'bold');
+        pdf.text('Profit Projection by Student Count', 15, yPosition);
+        yPosition += 6;
+        pdf.addImage(imgData, 'PNG', 15, yPosition, imgWidth, imgHeight);
+        yPosition += imgHeight + 10;
+      } catch (error) {
+        console.error('Error capturing line chart:', error);
+      }
+    }
+
+    // Capture Pie Chart
+    if (pieChartRef.current) {
+      try {
+        checkPageBreak(90);
+        const canvas = await html2canvas(pieChartRef.current, { scale: 2, backgroundColor: '#ffffff' });
+        const imgData = canvas.toDataURL('image/png');
+        const imgWidth = pageWidth - 30;
+        const imgHeight = (canvas.height * imgWidth) / canvas.width;
+
+        pdf.setFontSize(11);
+        pdf.setFont('helvetica', 'bold');
+        pdf.text('Cost Breakdown by Category', 15, yPosition);
+        yPosition += 6;
+        pdf.addImage(imgData, 'PNG', 15, yPosition, imgWidth, imgHeight);
+        yPosition += imgHeight + 10;
+      } catch (error) {
+        console.error('Error capturing pie chart:', error);
+      }
+    }
+
+    // Capture Bar Chart
+    if (barChartRef.current) {
+      try {
+        checkPageBreak(90);
+        const canvas = await html2canvas(barChartRef.current, { scale: 2, backgroundColor: '#ffffff' });
+        const imgData = canvas.toDataURL('image/png');
+        const imgWidth = pageWidth - 30;
+        const imgHeight = (canvas.height * imgWidth) / canvas.width;
+
+        if (yPosition + imgHeight > pageHeight - 20) {
+          pdf.addPage();
+          yPosition = 20;
+        }
+
+        pdf.setFontSize(11);
+        pdf.setFont('helvetica', 'bold');
+        pdf.text('Revenue vs Costs Analysis', 15, yPosition);
+        yPosition += 6;
+        pdf.addImage(imgData, 'PNG', 15, yPosition, imgWidth, imgHeight);
+        yPosition += imgHeight + 10;
+      } catch (error) {
+        console.error('Error capturing bar chart:', error);
+      }
+    }
+
+    // Capture Break-even Analysis
+    if (breakEvenRef.current) {
+      try {
+        checkPageBreak(70);
+        const canvas = await html2canvas(breakEvenRef.current, { scale: 2, backgroundColor: '#ffffff' });
+        const imgData = canvas.toDataURL('image/png');
+        const imgWidth = pageWidth - 30;
+        const imgHeight = (canvas.height * imgWidth) / canvas.width;
+
+        pdf.setFontSize(11);
+        pdf.setFont('helvetica', 'bold');
+        pdf.text('Break-even Analysis', 15, yPosition);
+        yPosition += 6;
+        pdf.addImage(imgData, 'PNG', 15, yPosition, imgWidth, imgHeight);
+      } catch (error) {
+        console.error('Error capturing break-even chart:', error);
+      }
+    }
+
+    // Save PDF
+    pdf.save(`OTHM-Budget-Calculator-${new Date().toISOString().split('T')[0]}.pdf`);
+  };
+
   const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
 
   // Group items by category
@@ -195,12 +432,23 @@ const OTHMBudgetCalculator = () => {
 
         {/* Header */}
         <div className="bg-white rounded-xl shadow-lg p-8 mb-6">
-          <h1 className="text-4xl font-bold text-gray-800 mb-2">OTHM IT Degree Programme</h1>
-          <p className="text-xl text-gray-600">Budget Calculator - Fast-Track Pathway (Level 4 + 5)</p>
-          <div className="mt-4 flex gap-4 text-sm text-gray-500">
-            <span>Duration: 24 months (2 years)</span>
-            <span>•</span>
-            <span>Region 3 Pricing (Sri Lanka)</span>
+          <div className="flex justify-between items-start">
+            <div>
+              <h1 className="text-4xl font-bold text-gray-800 mb-2">OTHM IT Degree Programme</h1>
+              <p className="text-xl text-gray-600">Budget Calculator - Fast-Track Pathway (Level 4 + 5)</p>
+              <div className="mt-4 flex gap-4 text-sm text-gray-500">
+                <span>Duration: 24 months (2 years)</span>
+                <span>•</span>
+                <span>Region 3 Pricing (Sri Lanka)</span>
+              </div>
+            </div>
+            <button
+              onClick={generatePDF}
+              className="flex items-center gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 text-white px-6 py-3 rounded-lg hover:from-blue-700 hover:to-indigo-700 transition shadow-lg hover:shadow-xl transform hover:scale-105"
+            >
+              <Download className="w-5 h-5" />
+              <span className="font-semibold">Download PDF</span>
+            </button>
           </div>
         </div>
 
@@ -561,7 +809,7 @@ const OTHMBudgetCalculator = () => {
         {/* Charts Section */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
           {/* Profit Projection Chart */}
-          <div className="bg-white rounded-xl shadow-lg p-6">
+          <div ref={lineChartRef} className="bg-white rounded-xl shadow-lg p-6">
             <h3 className="text-xl font-bold text-gray-800 mb-4">Profit Projection by Student Count</h3>
             <ResponsiveContainer width="100%" height={300}>
               <LineChart data={projectionData}>
@@ -578,7 +826,7 @@ const OTHMBudgetCalculator = () => {
           </div>
 
           {/* Cost Breakdown by Category */}
-          <div className="bg-white rounded-xl shadow-lg p-6">
+          <div ref={pieChartRef} className="bg-white rounded-xl shadow-lg p-6">
             <h3 className="text-xl font-bold text-gray-800 mb-4">Cost Breakdown by Category</h3>
             <ResponsiveContainer width="100%" height={300}>
               <PieChart>
@@ -603,7 +851,7 @@ const OTHMBudgetCalculator = () => {
         </div>
 
         {/* Revenue vs Costs Comparison */}
-        <div className="bg-white rounded-xl shadow-lg p-6 mb-6">
+        <div ref={barChartRef} className="bg-white rounded-xl shadow-lg p-6 mb-6">
           <h3 className="text-xl font-bold text-gray-800 mb-4">Revenue vs Costs Analysis</h3>
           <ResponsiveContainer width="100%" height={350}>
             <BarChart data={projectionData}>
@@ -622,7 +870,7 @@ const OTHMBudgetCalculator = () => {
         {/* Break-even Analysis */}
         <div className="bg-white rounded-xl shadow-lg p-6">
           <h3 className="text-xl font-bold text-gray-800 mb-4">Break-even Analysis</h3>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div ref={breakEvenRef} className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div className="p-4 bg-blue-50 rounded-lg">
               <p className="text-sm text-gray-600 mb-1">Break-even Students</p>
               <p className="text-2xl font-bold text-blue-600">
